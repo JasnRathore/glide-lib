@@ -1,5 +1,4 @@
 // +build windows
-
 package glide
 
 import (
@@ -7,8 +6,10 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+	"fmt"
 
 	"github.com/jchv/go-webview2"
+	utils "github.com/JasnRathore/glide-lib/utils"
 )
 
 type App struct {
@@ -119,6 +120,14 @@ func (a *App) Navigate(url string) {
 func (a *App) RunWithURL(url string) {
 	a.Navigate(url)
 	a.Run()
+}
+
+
+func (a *App) InvokeHandler(funcs []interface{}) {
+	for _, fn := range funcs {
+		name := utils.FuncToString(fn)
+		fmt.Println(name)
+	}
 }
 
 func (a *App) AddMenuItem(item MenuItem) {
