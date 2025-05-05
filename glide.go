@@ -6,7 +6,6 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
-	"fmt"
 
 	"github.com/jchv/go-webview2"
 	utils "github.com/JasnRathore/glide-lib/utils"
@@ -126,7 +125,7 @@ func (a *App) RunWithURL(url string) {
 func (a *App) InvokeHandler(funcs []interface{}) {
 	for _, fn := range funcs {
 		name := utils.FuncToString(fn)
-		fmt.Println(name)
+		a.webview.Bind(name,fn)
 	}
 }
 
