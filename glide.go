@@ -134,3 +134,6 @@ func (a *App) AddMenuItem(item MenuItem) {
 		a.tray.AddMenuItem(item)
 	}
 }
+func (a *App) GetWebView() webview2.WebView {
+	return a.webview
+}
