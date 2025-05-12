@@ -22,11 +22,15 @@ type App struct {
 var (
 	user32     = syscall.NewLazyDLL("user32.dll")
 	showWindow = user32.NewProc("ShowWindow")
+	showWindowAsync  = user32.NewProc("ShowWindowAsync")
 )
 
 const (
 	SW_HIDE = 0
 	SW_SHOW = 5
+	SW_MINIMIZE = 6
+	SW_MAXIMIZE = 3
+	SW_RESTORE = 9
 )
 
 func hideWindow(w webview2.WebView) {
@@ -39,6 +43,29 @@ func myShowWindow(w webview2.WebView) {
 	showWindow.Call(uintptr(hwnd), SW_SHOW)
 }
 
+// Maximize maximizes the application window
+func (a *App) Maximize() {
+	if a.webview != nil {
+		hwnd := a.webview.Window()
+		showWindowAsync.Call(uintptr(hwnd), SW_MAXIMIZE)
+	}
+}
+
+// Minimize minimizes the application window
+func (a *App) Minimize() {
+	if a.webview != nil {
+		hwnd := a.webview.Window()
+		showWindowAsync.Call(uintptr(hwnd), SW_MINIMIZE)
+	}
+}
+
+// Restore restores the window from minimized or maximized state
+func (a *App) Restore() {
+	if a.webview != nil {
+		hwnd := a.webview.Window()
+		showWindowAsync.Call(uintptr(hwnd), SW_RESTORE)
+	}
+}
 
 func (a *App) ShowWindow() {
     if a.webview != nil {
