@@ -34,6 +34,7 @@ var (
 	getSystemMetrics = user32.NewProc("GetSystemMetrics")
 	setLayeredWindowAttributes = user32.NewProc("SetLayeredWindowAttributes")
 	dwmExtendFrameIntoClientArea = syscall.NewLazyDLL("dwmapi.dll").NewProc("DwmExtendFrameIntoClientArea")
+	dwmSetWindowAttribute = syscall.NewLazyDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
 	getDC = user32.NewProc("GetDC")
 	releaseDC = user32.NewProc("ReleaseDC")
 )
@@ -56,6 +57,7 @@ const (
 
 	// SetWindowPos flags
 	SWP_NOSIZE         = 0x0001
+	SWP_NOMOVE         = 0x0002
 	SWP_NOZORDER       = 0x0004
 	SWP_NOACTIVATE     = 0x0010
 	SWP_SHOWWINDOW     = 0x0040
@@ -81,6 +83,18 @@ const (
 	WS_EX_TRANSPARENT  = 0x00000020
 	WS_EX_COMPOSITED   = 0x02000000
 	WS_EX_APPWINDOW    = 0x00040000
+	
+	// DWM constants for Windows 11 transparency effect
+	DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+	DWMWA_MICA_EFFECT = 1029
+	DWMWA_SYSTEMBACKDROP_TYPE = 38
+	
+	// Backdrop types
+	DWM_SYSTEMBACKDROP_TYPE_AUTO = 0
+	DWM_SYSTEMBACKDROP_TYPE_NONE = 1
+	DWM_SYSTEMBACKDROP_TYPE_MICA = 2
+	DWM_SYSTEMBACKDROP_TYPE_ACRYLIC = 3
+	DWM_SYSTEMBACKDROP_TYPE_TABBED = 4
 )
 
 // Using functions instead of constants to avoid the uintptr overflow issue
@@ -143,58 +157,116 @@ func (a *App) SetTransparency(alpha byte) {
 }
 
 // SetBackgroundTransparent makes the window background transparent while keeping the content visible
-// SetBackgroundTransparent makes the window background transparent while keeping the content visible
 func (a *App) SetBackgroundTransparent() error {
-    if a.webview == nil {
-        return fmt.Errorf("Webview not initialized, cannot set transparent background")
-    }
+	if a.webview == nil {
+		return fmt.Errorf("Webview not initialized, cannot set transparent background")
+	}
 
-    hwnd := a.webview.Window()
-    
-    a.webview.Dispatch(func() {
-        // Get current extended window style
-        exStyle, _, _ := getWindowLongProc().Call(
-            uintptr(hwnd),
-            uintptr(gwlExStyle()),
-        )
-        
-        // Add necessary styles for transparency
-        newExStyle := uintptr(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_COMPOSITED)
-        setWindowLongProc().Call(
-            uintptr(hwnd),
-            uintptr(gwlExStyle()),
-            newExStyle,
-        )
-        
-        // Make the window transparent (0 alpha)
-        setLayeredWindowAttributes.Call(
-            uintptr(hwnd),
-            0,                  // Color key (not used)
-            0,                  // Alpha (0 = fully transparent)
-            uintptr(LWA_ALPHA), // Use alpha channel
-        )
-        
-        // Remove the background brush
-        const GWL_HBRBACKGROUND = -10
-        setWindowLongProc().Call(
-            uintptr(hwnd),
-            uintptr(GWL_HBRBACKGROUND),
-            uintptr(0), // NULL brush
-        )
-        
-        // Force redraw
-        showWindow.Call(
-            uintptr(hwnd),
-            uintptr(SW_SHOW),
-        )
-        
-        // Update the window
-        updateWindow := user32.NewProc("UpdateWindow")
-        updateWindow.Call(uintptr(hwnd))
-    })
-    
-    return nil
-}	
+	hwnd := a.webview.Window()
+	
+	a.webview.Dispatch(func() {
+		// Step 1: Set the required window style
+		exStyle, _, _ := getWindowLongProc().Call(
+			uintptr(hwnd),
+			uintptr(gwlExStyle()),
+		)
+		
+		// Add layered and transparent styles
+		newExStyle := exStyle | WS_EX_LAYERED
+		setWindowLongProc().Call(
+			uintptr(hwnd),
+			uintptr(gwlExStyle()),
+			newExStyle,
+		)
+		
+		// Step 2: Get the current window style and modify it to remove borders
+		style, _, _ := getWindowLongProc().Call(
+			uintptr(hwnd),
+			uintptr(gwlStyle()),
+		)
+		
+		// Remove caption and border styles for complete transparency effect
+		newStyle := style &^ uintptr(WS_CAPTION|WS_THICKFRAME|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_SYSMENU|WS_BORDER)
+		setWindowLongProc().Call(
+			uintptr(hwnd),
+			uintptr(gwlStyle()),
+			newStyle,
+		)
+		
+		// Step 3: Try to use modern Windows transparency effects (Windows 11)
+		// This attempts to use the Acrylic effect which gives better transparency
+		backdropType := DWM_SYSTEMBACKDROP_TYPE_ACRYLIC
+		dwmSetWindowAttribute.Call(
+			uintptr(hwnd),
+			uintptr(DWMWA_SYSTEMBACKDROP_TYPE),
+			uintptr(unsafe.Pointer(&backdropType)),
+			unsafe.Sizeof(backdropType),
+		)
+		
+		// Step 4: Additionally use the classic DWM frame extension technique as fallback
+		margins := MARGINS{-1, -1, -1, -1} // -1 means extend the frame into the entire client area
+		
+		// Extend the frame into the client area
+		dwmExtendFrameIntoClientArea.Call(
+			uintptr(hwnd),
+			uintptr(unsafe.Pointer(&margins)),
+		)
+		
+		// Step 5: Set the window with alpha channel (transparency)
+		setLayeredWindowAttributes.Call(
+			uintptr(hwnd),
+			0,                  // crKey - color to make transparent, 0 means not used
+			230,                // alpha value (230 for slightly translucent content)
+			uintptr(LWA_ALPHA), // use alpha value
+		)
+		
+		// Step 6: Force the window to redraw with the new settings
+		setWindowPos.Call(
+			uintptr(hwnd),
+			0,
+			0, 0, 0, 0,
+			uintptr(SWP_FRAMECHANGED|SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOOWNERZORDER),
+		)
+		
+		// Step 7: Ensure the window is shown with the new styling
+		showWindow.Call(
+			uintptr(hwnd),
+			uintptr(SW_SHOW),
+		)
+	})
+	
+	return nil
+}
+
+// SetAcrylicEffect applies the Windows 11 acrylic effect to the window
+func (a *App) SetAcrylicEffect() error {
+	if a.webview == nil {
+		return fmt.Errorf("Webview not initialized, cannot apply acrylic effect")
+	}
+
+	hwnd := a.webview.Window()
+	
+	a.webview.Dispatch(func() {
+		// Apply the acrylic backdrop type
+		backdropType := DWM_SYSTEMBACKDROP_TYPE_ACRYLIC
+		dwmSetWindowAttribute.Call(
+			uintptr(hwnd),
+			uintptr(DWMWA_SYSTEMBACKDROP_TYPE),
+			uintptr(unsafe.Pointer(&backdropType)),
+			unsafe.Sizeof(backdropType),
+		)
+		
+		// Force the window to redraw
+		setWindowPos.Call(
+			uintptr(hwnd),
+			0,
+			0, 0, 0, 0,
+			uintptr(SWP_FRAMECHANGED|SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER),
+		)
+	})
+	
+	return nil
+}
 
 // ScreenSize represents the dimensions of a screen/monitor
 type ScreenSize struct {
