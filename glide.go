@@ -2,6 +2,7 @@
 package glide
 
 import (
+	"fmt"
 	"log"
 	"runtime"
 	"sync"
@@ -11,6 +12,11 @@ import (
 	"github.com/jchv/go-webview2"
 	utils "github.com/JasnRathore/glide-lib/utils"
 )
+
+// MARGINS structure for DwmExtendFrameIntoClientArea
+type MARGINS struct {
+	Left, Right, Top, Bottom int32
+}
 
 type App struct {
 	webview webview2.WebView
@@ -68,6 +74,13 @@ const (
 	WS_EX_LAYERED      = 0x00080000
 	LWA_ALPHA          = 0x00000002
 	LWA_COLORKEY       = 0x00000001
+	
+	// Constants for transparency
+	GWL_STYLE          = -16
+	GWL_EXSTYLE        = -20
+	WS_EX_TRANSPARENT  = 0x00000020
+	WS_EX_COMPOSITED   = 0x02000000
+	WS_EX_APPWINDOW    = 0x00040000
 )
 
 // Using functions instead of constants to avoid the uintptr overflow issue
@@ -127,6 +140,48 @@ func (a *App) SetTransparency(alpha byte) {
 			uintptr(LWA_ALPHA), // use alpha value
 		)
 	})
+}
+
+// SetBackgroundTransparent makes the window background transparent while keeping the content visible
+func (a *App) SetBackgroundTransparent() error {
+	if a.webview == nil {
+		return fmt.Errorf("Webview not initialized, cannot set transparent background")
+	}
+
+	hwnd := a.webview.Window()
+	
+	a.webview.Dispatch(func() {
+		// Step 1: Set the required window style
+		exStyle, _, _ := getWindowLongProc().Call(
+			uintptr(hwnd),
+			uintptr(gwlExStyle()),
+		)
+		
+		// Add layered and composited styles
+		newExStyle := exStyle | WS_EX_LAYERED | WS_EX_COMPOSITED
+		setWindowLongProc().Call(
+			uintptr(hwnd),
+			uintptr(gwlExStyle()),
+			newExStyle,
+		)
+		
+		// Step 2: Make the background transparent, content visible
+		margins := MARGINS{-1, -1, -1, -1} // -1 means extend the frame into the entire client area
+		
+		// Extend the frame into the client area
+		dwmExtendFrameIntoClientArea.Call(
+			uintptr(hwnd),
+			uintptr(unsafe.Pointer(&margins)),
+		)
+		
+		// Step 3: Update the window to apply changes
+		showWindow.Call(
+			uintptr(hwnd),
+			uintptr(SW_SHOW),
+		)
+	})
+	
+	return nil
 }
 
 // ScreenSize represents the dimensions of a screen/monitor
