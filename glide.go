@@ -24,6 +24,8 @@ var (
 	user32           = syscall.NewLazyDLL("user32.dll")
 	showWindow       = user32.NewProc("ShowWindow")
 	showWindowAsync  = user32.NewProc("ShowWindowAsync")
+	setWindowPos     = user32.NewProc("SetWindowPos")
+	getSystemMetrics = user32.NewProc("GetSystemMetrics")
 )
 
 // Window constants
@@ -41,6 +43,22 @@ const (
 	WS_MAXIMIZEBOX = 0x00010000
 	WS_SYSMENU     = 0x00080000
 	WS_BORDER      = 0x00800000
+
+	// SetWindowPos flags
+	SWP_NOSIZE         = 0x0001
+	SWP_NOZORDER       = 0x0004
+	SWP_NOACTIVATE     = 0x0010
+	SWP_SHOWWINDOW     = 0x0040
+	SWP_FRAMECHANGED   = 0x0020
+	SWP_NOOWNERZORDER  = 0x0200
+	
+	// GetSystemMetrics constants
+	SM_CXSCREEN        = 0
+	SM_CYSCREEN        = 1
+	SM_CXVIRTUALSCREEN = 78
+	SM_CYVIRTUALSCREEN = 79
+	SM_XVIRTUALSCREEN  = 76
+	SM_YVIRTUALSCREEN  = 77
 )
 
 // Using a function instead of a constant to avoid the uintptr overflow issue
@@ -62,6 +80,71 @@ func setWindowLongProc() *syscall.LazyProc {
 		return user32.NewProc("SetWindowLongPtrW")
 	}
 	return user32.NewProc("SetWindowLongW")
+}
+
+// ScreenSize represents the dimensions of a screen/monitor
+type ScreenSize struct {
+	Width  int
+	Height int
+}
+
+// VirtualScreenInfo represents the virtual screen dimensions and position
+type VirtualScreenInfo struct {
+	Width  int
+	Height int
+	X      int
+	Y      int
+}
+
+// GetScreenSize returns the primary monitor resolution
+func (a *App) GetScreenSize() ScreenSize {
+	width, _, _ := getSystemMetrics.Call(SM_CXSCREEN)
+	height, _, _ := getSystemMetrics.Call(SM_CYSCREEN)
+	
+	return ScreenSize{
+		Width:  int(width),
+		Height: int(height),
+	}
+}
+
+// GetVirtualScreenInfo returns information about the virtual screen
+// Virtual screen encompasses all display monitors
+func (a *App) GetVirtualScreenInfo() VirtualScreenInfo {
+	width, _, _ := getSystemMetrics.Call(SM_CXVIRTUALSCREEN)
+	height, _, _ := getSystemMetrics.Call(SM_CYVIRTUALSCREEN)
+	x, _, _ := getSystemMetrics.Call(SM_XVIRTUALSCREEN)
+	y, _, _ := getSystemMetrics.Call(SM_YVIRTUALSCREEN)
+	
+	return VirtualScreenInfo{
+		Width:  int(width),
+		Height: int(height),
+		X:      int(x),
+		Y:      int(y),
+	}
+}
+
+// SetPosition sets the window position to the specified x and y coordinates
+func (a *App) SetPosition(x, y int) {
+	if a.webview == nil {
+		log.Println("Webview not initialized, cannot set position")
+		return
+	}
+
+	hwnd := a.webview.Window()
+	a.webview.Dispatch(func() {
+		// SetWindowPos parameters:
+		// hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags
+		// SWP_NOSIZE | SWP_NOZORDER means don't change size or z-order, just position
+		setWindowPos.Call(
+			uintptr(hwnd),
+			0,                // hWndInsertAfter = 0 (no z-order change)
+			uintptr(x),       // x position
+			uintptr(y),       // y position
+			0,                // width (ignored with SWP_NOSIZE)
+			0,                // height (ignored with SWP_NOSIZE)
+			uintptr(SWP_NOSIZE|SWP_NOZORDER), // don't change size or z-order
+		)
+	})
 }
 
 func (a *App) RemoveBorders() {
