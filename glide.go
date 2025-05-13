@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+	"unsafe"
 
 	"github.com/jchv/go-webview2"
 	utils "github.com/JasnRathore/glide-lib/utils"
@@ -20,18 +21,113 @@ type App struct {
 }
 
 var (
-	user32     = syscall.NewLazyDLL("user32.dll")
-	showWindow = user32.NewProc("ShowWindow")
+	user32           = syscall.NewLazyDLL("user32.dll")
+	showWindow       = user32.NewProc("ShowWindow")
 	showWindowAsync  = user32.NewProc("ShowWindowAsync")
 )
 
+// Window constants
 const (
-	SW_HIDE = 0
-	SW_SHOW = 5
+	SW_HIDE     = 0
+	SW_SHOW     = 5
 	SW_MINIMIZE = 6
 	SW_MAXIMIZE = 3
-	SW_RESTORE = 9
+	SW_RESTORE  = 9
+	
+	// Window styles
+	WS_CAPTION     = 0x00C00000
+	WS_THICKFRAME  = 0x00040000
+	WS_MINIMIZEBOX = 0x00020000
+	WS_MAXIMIZEBOX = 0x00010000
+	WS_SYSMENU     = 0x00080000
+	WS_BORDER      = 0x00800000
 )
+
+// Using a function instead of a constant to avoid the uintptr overflow issue
+func gwlStyle() int32 {
+	return -16
+}
+
+// Get appropriate window long proc based on architecture
+func getWindowLongProc() *syscall.LazyProc {
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		return user32.NewProc("GetWindowLongPtrW")
+	}
+	return user32.NewProc("GetWindowLongW")
+}
+
+// Set appropriate window long proc based on architecture
+func setWindowLongProc() *syscall.LazyProc {
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		return user32.NewProc("SetWindowLongPtrW")
+	}
+	return user32.NewProc("SetWindowLongW")
+}
+
+func (a *App) RemoveBorders() {
+	if a.webview == nil {
+		return
+	}
+
+	hwnd := a.webview.Window()
+	
+	// Get current window style
+	style, _, _ := getWindowLongProc().Call(
+		uintptr(hwnd),
+		uintptr(gwlStyle()),
+	)
+	
+	// Remove caption and border styles
+	newStyle := style &^ uintptr(WS_CAPTION|WS_THICKFRAME|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_SYSMENU|WS_BORDER)
+	
+	// Set new window style
+	setWindowLongProc().Call(
+		uintptr(hwnd),
+		uintptr(gwlStyle()),
+		newStyle,
+	)
+	
+	// Force redraw
+	a.webview.Dispatch(func() {
+		showWindow.Call(
+			uintptr(hwnd),
+			uintptr(SW_SHOW),
+		)
+	})
+}
+
+// RestoreBorders restores the default window borders and title bar
+func (a *App) RestoreBorders() {
+	if a.webview == nil {
+		return
+	}
+
+	hwnd := a.webview.Window()
+	
+	// Get default window style
+	style, _, _ := getWindowLongProc().Call(
+		uintptr(hwnd),
+		uintptr(gwlStyle()),
+	)
+	
+	// Add back caption and border styles
+	newStyle := style | uintptr(WS_CAPTION|WS_THICKFRAME|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_SYSMENU|WS_BORDER)
+	
+	// Set new window style
+	setWindowLongProc().Call(
+		uintptr(hwnd),
+		uintptr(gwlStyle()),
+		newStyle,
+	)
+	
+	// Force redraw
+	a.webview.Dispatch(func() {
+		showWindow.Call(
+			uintptr(hwnd),
+			uintptr(SW_SHOW),
+		)
+	})
+}
 
 func hideWindow(w webview2.WebView) {
 	hwnd := w.Window()
@@ -148,7 +244,6 @@ func (a *App) RunWithURL(url string) {
 	a.Run()
 }
 
-
 func (a *App) InvokeHandler(funcs []interface{}) {
 	for _, fn := range funcs {
 		name := utils.FuncToString(fn)
@@ -161,6 +256,7 @@ func (a *App) AddMenuItem(item MenuItem) {
 		a.tray.AddMenuItem(item)
 	}
 }
+
 func (a *App) GetWebView() webview2.WebView {
 	return a.webview
 }
