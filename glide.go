@@ -143,46 +143,58 @@ func (a *App) SetTransparency(alpha byte) {
 }
 
 // SetBackgroundTransparent makes the window background transparent while keeping the content visible
+// SetBackgroundTransparent makes the window background transparent while keeping the content visible
 func (a *App) SetBackgroundTransparent() error {
-	if a.webview == nil {
-		return fmt.Errorf("Webview not initialized, cannot set transparent background")
-	}
+    if a.webview == nil {
+        return fmt.Errorf("Webview not initialized, cannot set transparent background")
+    }
 
-	hwnd := a.webview.Window()
-	
-	a.webview.Dispatch(func() {
-		// Step 1: Set the required window style
-		exStyle, _, _ := getWindowLongProc().Call(
-			uintptr(hwnd),
-			uintptr(gwlExStyle()),
-		)
-		
-		// Add layered and composited styles
-		newExStyle := exStyle | WS_EX_LAYERED | WS_EX_COMPOSITED
-		setWindowLongProc().Call(
-			uintptr(hwnd),
-			uintptr(gwlExStyle()),
-			newExStyle,
-		)
-		
-		// Step 2: Make the background transparent, content visible
-		margins := MARGINS{-1, -1, -1, -1} // -1 means extend the frame into the entire client area
-		
-		// Extend the frame into the client area
-		dwmExtendFrameIntoClientArea.Call(
-			uintptr(hwnd),
-			uintptr(unsafe.Pointer(&margins)),
-		)
-		
-		// Step 3: Update the window to apply changes
-		showWindow.Call(
-			uintptr(hwnd),
-			uintptr(SW_SHOW),
-		)
-	})
-	
-	return nil
-}
+    hwnd := a.webview.Window()
+    
+    a.webview.Dispatch(func() {
+        // Get current extended window style
+        exStyle, _, _ := getWindowLongProc().Call(
+            uintptr(hwnd),
+            uintptr(gwlExStyle()),
+        )
+        
+        // Add necessary styles for transparency
+        newExStyle := uintptr(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_COMPOSITED)
+        setWindowLongProc().Call(
+            uintptr(hwnd),
+            uintptr(gwlExStyle()),
+            newExStyle,
+        )
+        
+        // Make the window transparent (0 alpha)
+        setLayeredWindowAttributes.Call(
+            uintptr(hwnd),
+            0,                  // Color key (not used)
+            0,                  // Alpha (0 = fully transparent)
+            uintptr(LWA_ALPHA), // Use alpha channel
+        )
+        
+        // Remove the background brush
+        const GWL_HBRBACKGROUND = -10
+        setWindowLongProc().Call(
+            uintptr(hwnd),
+            uintptr(GWL_HBRBACKGROUND),
+            uintptr(0), // NULL brush
+        )
+        
+        // Force redraw
+        showWindow.Call(
+            uintptr(hwnd),
+            uintptr(SW_SHOW),
+        )
+        
+        // Update the window
+        updateWindow := user32.NewProc("UpdateWindow")
+        updateWindow.Call(uintptr(hwnd))
+    })
+    
+    return nil
+}	
 
 // ScreenSize represents the dimensions of a screen/monitor
 type ScreenSize struct {
