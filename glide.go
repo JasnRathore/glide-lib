@@ -156,7 +156,7 @@ func (a *App) SetTransparency(alpha byte) {
 	})
 }
 
-// SetBackgroundTransparent makes the window background transparent while keeping the content visible
+// SetBackgroundTransparent makes only the window background transparent while keeping content fully visible
 func (a *App) SetBackgroundTransparent() error {
 	if a.webview == nil {
 		return fmt.Errorf("Webview not initialized, cannot set transparent background")
@@ -165,36 +165,44 @@ func (a *App) SetBackgroundTransparent() error {
 	hwnd := a.webview.Window()
 	
 	a.webview.Dispatch(func() {
-		// Step 1: Set the required window style
+		// Step 1: Set WebView2 background transparency
+		// This must be done before the window is shown
+		if w2, ok := a.webview.(interface{ SetBackgroundColor(r, g, b, a uint8) }); ok {
+			// If the webview interface supports setting background color directly
+			w2.SetBackgroundColor(0, 0, 0, 0) // RGBA with 0 alpha = transparent
+		}
+
+		// Step 2: Modify window styles to support transparency
 		exStyle, _, _ := getWindowLongProc().Call(
 			uintptr(hwnd),
 			uintptr(gwlExStyle()),
 		)
 		
-		// Add layered and transparent styles
-		newExStyle := exStyle | WS_EX_LAYERED
+		// Add layered window attributes but NOT WS_EX_TRANSPARENT 
+		// (which would make content click-through)
+		newExStyle := exStyle | WS_EX_LAYERED | WS_EX_COMPOSITED
 		setWindowLongProc().Call(
 			uintptr(hwnd),
 			uintptr(gwlExStyle()),
 			newExStyle,
 		)
 		
-		// Step 2: Get the current window style and modify it to remove borders
+		// Step 3: Remove window frame and borders for a clean transparent effect
 		style, _, _ := getWindowLongProc().Call(
 			uintptr(hwnd),
 			uintptr(gwlStyle()),
 		)
 		
-		// Remove caption and border styles for complete transparency effect
-		newStyle := style &^ uintptr(WS_CAPTION|WS_THICKFRAME|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_SYSMENU|WS_BORDER)
+		// Remove caption and borders while keeping other functionality
+		newStyle := style &^ uintptr(WS_CAPTION|WS_THICKFRAME|WS_BORDER)
 		setWindowLongProc().Call(
 			uintptr(hwnd),
 			uintptr(gwlStyle()),
 			newStyle,
 		)
-		
-		// Step 3: Try to use modern Windows transparency effects (Windows 11)
-		// This attempts to use the Acrylic effect which gives better transparency
+
+		// Step 4: Apply DWM attributes for modern transparency effects (Windows 10/11)
+		// Try Acrylic effect first (most similar to Tauri's look)
 		backdropType := DWM_SYSTEMBACKDROP_TYPE_ACRYLIC
 		dwmSetWindowAttribute.Call(
 			uintptr(hwnd),
@@ -203,32 +211,42 @@ func (a *App) SetBackgroundTransparent() error {
 			unsafe.Sizeof(backdropType),
 		)
 		
-		// Step 4: Additionally use the classic DWM frame extension technique as fallback
-		margins := MARGINS{-1, -1, -1, -1} // -1 means extend the frame into the entire client area
+		// Enable dark mode for better transparency effects
+		darkMode := 1
+		dwmSetWindowAttribute.Call(
+			uintptr(hwnd),
+			uintptr(DWMWA_USE_IMMERSIVE_DARK_MODE),
+			uintptr(unsafe.Pointer(&darkMode)),
+			unsafe.Sizeof(darkMode),
+		)
 		
-		// Extend the frame into the client area
+		// Step 5: Extend the DWM frame into the client area
+		// This ensures proper rendering of transparency with DWM
+		margins := MARGINS{-1, -1, -1, -1}
 		dwmExtendFrameIntoClientArea.Call(
 			uintptr(hwnd),
 			uintptr(unsafe.Pointer(&margins)),
 		)
 		
-		// Step 5: Set the window with alpha channel (transparency)
+		// Step 6: Set color key transparency
+		// This is a fallback approach that makes a specific color transparent
+		// rather than using alpha blending for the entire window
 		setLayeredWindowAttributes.Call(
 			uintptr(hwnd),
-			0,                  // crKey - color to make transparent, 0 means not used
-			230,                // alpha value (230 for slightly translucent content)
-			uintptr(LWA_ALPHA), // use alpha value
+			0,      // RGB(0,0,0) - black color key
+			255,    // Alpha - 255 = fully opaque for non-colorkey pixels
+			LWA_COLORKEY, // Use color key method instead of alpha
 		)
 		
-		// Step 6: Force the window to redraw with the new settings
+		// Force redraw with new settings
 		setWindowPos.Call(
 			uintptr(hwnd),
 			0,
 			0, 0, 0, 0,
-			uintptr(SWP_FRAMECHANGED|SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOOWNERZORDER),
+			uintptr(SWP_FRAMECHANGED|SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER),
 		)
 		
-		// Step 7: Ensure the window is shown with the new styling
+		// Make sure window is visible with new styling
 		showWindow.Call(
 			uintptr(hwnd),
 			uintptr(SW_SHOW),
