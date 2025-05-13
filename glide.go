@@ -26,6 +26,10 @@ var (
 	showWindowAsync  = user32.NewProc("ShowWindowAsync")
 	setWindowPos     = user32.NewProc("SetWindowPos")
 	getSystemMetrics = user32.NewProc("GetSystemMetrics")
+	setLayeredWindowAttributes = user32.NewProc("SetLayeredWindowAttributes")
+	dwmExtendFrameIntoClientArea = syscall.NewLazyDLL("dwmapi.dll").NewProc("DwmExtendFrameIntoClientArea")
+	getDC = user32.NewProc("GetDC")
+	releaseDC = user32.NewProc("ReleaseDC")
 )
 
 // Window constants
@@ -59,11 +63,20 @@ const (
 	SM_CYVIRTUALSCREEN = 79
 	SM_XVIRTUALSCREEN  = 76
 	SM_YVIRTUALSCREEN  = 77
+	
+	// Window transparency constants
+	WS_EX_LAYERED      = 0x00080000
+	LWA_ALPHA          = 0x00000002
+	LWA_COLORKEY       = 0x00000001
 )
 
-// Using a function instead of a constant to avoid the uintptr overflow issue
+// Using functions instead of constants to avoid the uintptr overflow issue
 func gwlStyle() int32 {
 	return -16
+}
+
+func gwlExStyle() int32 {
+	return -20
 }
 
 // Get appropriate window long proc based on architecture
@@ -80,6 +93,40 @@ func setWindowLongProc() *syscall.LazyProc {
 		return user32.NewProc("SetWindowLongPtrW")
 	}
 	return user32.NewProc("SetWindowLongW")
+}
+
+// SetTransparency sets the window transparency level (0-255, where 0 is fully transparent and 255 is fully opaque)
+func (a *App) SetTransparency(alpha byte) {
+	if a.webview == nil {
+		log.Println("Webview not initialized, cannot set transparency")
+		return
+	}
+
+	hwnd := a.webview.Window()
+	
+	a.webview.Dispatch(func() {
+		// Get current window style
+		exStyle, _, _ := getWindowLongProc().Call(
+			uintptr(hwnd),
+			uintptr(gwlExStyle()),
+		)
+		
+		// Add layered window style
+		newExStyle := exStyle | WS_EX_LAYERED
+		setWindowLongProc().Call(
+			uintptr(hwnd),
+			uintptr(gwlExStyle()),
+			newExStyle,
+		)
+		
+		// Set the transparency level
+		setLayeredWindowAttributes.Call(
+			uintptr(hwnd),
+			0,                  // crKey - color to make transparent, 0 means not used
+			uintptr(alpha),     // alpha value (0-255)
+			uintptr(LWA_ALPHA), // use alpha value
+		)
+	})
 }
 
 // ScreenSize represents the dimensions of a screen/monitor
